@@ -1,9 +1,3 @@
-"""
-    export OPENAI_API_KEY="your-api-key"
-    python main_script.py
-
-"""
-
 import os
 from io import BytesIO
 from datetime import datetime
@@ -13,16 +7,22 @@ from PIL import Image, ImageTk
 import tkinter as tk
 import openai
 
+
 class OpenAIClient:
     def __init__(self):
         if self.old_package(openai.__version__, "1.2.3"):
-            raise ValueError(f"Error: OpenAI version {openai.__version__}"
-                             " is less than the minimum version 1.2.3\n\n"
-                             ">>You should run 'pip install --upgrade openai')")
+            raise ValueError(
+                f"Error: OpenAI version {openai.__version__}"
+                " is less than the minimum version 1.2.3\n\n"
+                ">>You should run 'pip install --upgrade openai')"
+            )
 
-        # Instantiate OpenAI - this requires OpenAI key in environmnet varable
-        self.client = openai.OpenAI()
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("Error: OPENAI_API_KEY environment variable not set.")
 
+        # Instantiate OpenAI - use openai.OpenAIAPI() instead of openai.OpenAI()
+        self.client = openai.OpenAIAPI(api_key)
 
     @staticmethod
     def old_package(version, minimum):
@@ -33,39 +33,27 @@ class OpenAIClient:
     def generate_images(self, image_params):
         try:
             return self.client.images.generate(**image_params)
-        except openai.APIConnectionError as e:
-            print(f"Server connection error: {e.__cause__}")
-            raise
-        except openai.RateLimitError as e:
-            print(f"OpenAI RATE LIMIT error {e.status_code}: {e.response}")
-            raise
-        except openai.APIStatusError as e:
-            print(f"OpenAI STATUS error {e.status_code}: {e.response}")
-            raise
-        except openai.BadRequestError as e:
-            print(f"OpenAI BAD REQUEST error {e.status_code}: {e.response}")
-            raise
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
+        except openai.APIError as e:
+            print(f"OpenAI API error: {e}")
             raise
 
-# request image, decode and convert to png
+
 class ImageProcessor:
     @staticmethod
-    def download_image(url, img_filename):
-        while True:
+    def download_image(url, img_filename, max_retries=3):
+        for _ in range(max_retries):
             try:
                 print(f"getting URL: {url}")
                 response = requests.get(url)
                 response.raise_for_status()
+                break
             except requests.HTTPError as e:
-                print(f"Failed to download image from {url}. Error: {e.response.status_code}")
+                print(
+                    f"Failed to download image from {url}. Error: {e.response.status_code}"
+                )
                 retry = input("Retry? (y/n): ")
-                if retry.lower() in ["n", "no"]:
+                if retry.lower() not in ["y", "yes"]:
                     raise
-                else:
-                    continue
-            break
 
         image = Image.open(BytesIO(response.content))
         image.save(f"{img_filename}.png")
@@ -75,15 +63,19 @@ class ImageProcessor:
     @staticmethod
     def decode_base64(data, img_filename):
         if data is None:
-            print("Warning: Base64 data is None.")
+            print(f"Warning: Base64 data is None for {img_filename}.")
             return None
 
-        image = Image.open(BytesIO(base64.b64decode(data)))
-        image.save(f"{img_filename}.png")
-        print(f"{img_filename}.png was saved")
-        return image
+        try:
+            image = Image.open(BytesIO(base64.b64decode(data)))
+            image.save(f"{img_filename}.png")
+            print(f"{img_filename}.png was saved")
+            return image
+        except Exception as e:
+            print(f"Error decoding base64 data for {img_filename}: {e}")
+            return None
 
-# view image by clicking link 
+
 class ImageGUI:
     @staticmethod
     def display_image(image, img_index):
@@ -99,44 +91,30 @@ class ImageGUI:
 
         window.mainloop()
 
+
 def main():
     prompt = (
-            "Subject: beautiful lady sitting in a wine bar in a green dress"
-        "Style: the style of artist Jack Vettriano"
+        "Subject: beautiful lady sitting in a wine bar in a red dress"
+        "Style: the style of artist Jack Vettriano, painted in gouache"
     )
 
     image_params = {
-        "model": "dall-e-2",
+        "model": "dall-e-3",
         "n": 1,
         "size": "1024x1024",
-        "prompt": prompt, 
+        "prompt": prompt,
         "user": "myName",
     }
 
-    openai_client = OpenAIClient()
-
     try:
+        openai_client = OpenAIClient()
         images_response = openai_client.generate_images(image_params)
-    except openai.APIConnectionError as e:
-        print(f"Server connection error: {e.__cause__}")
-        return
-    except openai.RateLimitError as e:
-        print(f"OpenAI RATE LIMIT error {e.status_code}: {e.response}")
-        return
-    except openai.APIStatusError as e:
-        print(f"OpenAI STATUS error {e.status_code}: {e.response}")
-        return
-    except openai.BadRequestError as e:
-        print(f"OpenAI BAD REQUEST error {e.status_code}: {e.response}")
-        return
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+    except ValueError as e:
+        print(e)
         return
 
     images_dt = datetime.utcfromtimestamp(images_response.created)
-    img_filename = images_dt.strftime('DALLE-%Y%m%d_%H%M%S')
-
-    revised_prompt = images_response.data[0].revised_prompt
+    img_filename = images_dt.strftime("DALLE-%Y%m%d_%H%M%S")
 
     image_url_list = [image.model_dump()["url"] for image in images_response.data]
     image_data_list = [image.model_dump()["b64_json"] for image in images_response.data]
@@ -157,7 +135,7 @@ def main():
         for i, img in enumerate(image_objects):
             image_gui.display_image(img, i)
 
+
 # main driver
 if __name__ == "__main__":
     main()
-
